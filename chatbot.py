@@ -432,5 +432,46 @@ for epoch in range(1, epochs + 1):
 print("Game Over")
 
 
+# TESTING THE SEQ2SEQ MODEL
+
+# Loading the weights and running the session
+checkpoint = "./chatbot_weights.ckpt"
+session = tf.InteractiveSession()
+session.run(tf.global_variables_initializer())
+saver = tf.train.Saver()
+saver.restore(session, checkpoint)
+ 
+# Converting the questions from strings to lists of encoding integers
+def convert_string_to_int(question, word_to_int):
+    question = clean_text(question)
+    return [word_to_int.get(word, word_to_int['<OUT>']) for word in question.split()]
+    # dictionary.get(keyname, optional_value)
+    # keyname of the item you want to return the value from
+    # optional_ value to return if keyname does not exist in the dictionary
+ 
+# Setting up the chat
+while(True):
+    question = input("You: ")
+    if question == 'Goodbye':
+        break
+    question = convert_string_to_int(question, questions_words_to_int)
+    question = question + [questions_words_to_int['<PAD>']] * (25 - len(question))
+    fake_batch = np.zeros((batch_size, 25))
+    fake_batch[0] = question
+    predicted_answer = session.run(test_predictions, {inputs: fake_batch, keep_prob: 0.5})[0]
+    answer = ''
+    for i in np.argmax(predicted_answer, 1):
+        if answers_ints_to_word[i] == 'i':
+            token = ' I' #space before I?
+        elif answers_ints_word[i] == '<EOS>':
+            token = '.'
+        elif answers_ints_to_word[i] == '<OUT>':
+            token = 'out'
+        else:
+            token = ' ' + answers_ints_to_word[i]
+        answer += token
+        if token == '.':
+            break
+    print('ChatBot: ' + answer)
 
     
