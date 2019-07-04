@@ -37,7 +37,7 @@ for conversation in conversations_ids:
     for i in range(len(conversation) - 1):
         questions.append(id_to_line[conversation[i]])
         answers.append(id_to_line[conversation[i+1]])
-        
+
 # not sure about this last step:
 # second question is the first answer, third question is the second answer and so on...
 # include step=2 to separate answers and questions?
@@ -53,22 +53,43 @@ def clean_text(text):
     text = re.sub(r"that's", "that is", text)
     text = re.sub(r"what's", "what is", text)
     text = re.sub(r"where's", "where is", text)
+    text = re.sub(r"how's", "how is", text)
     text = re.sub(r"\'ll", " will", text)
     text = re.sub(r"\'ve", " have", text)
     text = re.sub(r"\'re", " are", text)
     text = re.sub(r"\'d", " would", text)
+    text = re.sub(r"n't", " not", text)
     text = re.sub(r"won't", "will not", text)
     text = re.sub(r"can't", "cannot", text)
-    text = re.sub(r"[-()\"#/@,;.:<>{}+=~|?]", "", text)
+    text = re.sub(r"[-()\"#/@;:<>{}`+=~|.!?,]", "", text)
+
     return text
 
 clean_questions = []
 for question in questions:
     clean_questions.append(clean_text(question))
-    
+
 clean_answers = []
 for answer in answers:
     clean_answers.append(clean_text(answer))
+
+# Filtering out the questions and answers that are too short or too long
+short_questions = []
+short_answers = []
+i = 0
+for question in clean_questions:
+    if 2 <= len(question.split()) <= 25:
+        short_questions.append(question)
+        short_answers.append(clean_answers[i])
+    i += 1
+clean_questions = []
+clean_answers = []
+i = 0
+for answer in short_answers:
+    if 2 <= len(answer.split()) <= 25:
+        clean_answers.append(answer)
+        clean_questions.append(short_questions[i])
+    i += 1
 
 # Creating a dictionary that maps each word with its number of ocurrences
 word_to_count = {}
@@ -88,19 +109,19 @@ for answer in clean_answers:
             word_to_count[word] += 1
 
 # Creating two dictionaries that map words in questions and words in answers with a unique integer
-threshold = 20 # minimum number of times words have to appear in questions or in answers to be considered
+threshold_questions = 15 # minimum number of times words have to appear in questions to be considered
 questions_words_to_int = {}
-
 word_number = 0
 for word, count in word_to_count.items():
-    if count >= threshold:
+    if count >= threshold_questions:
         questions_words_to_int[word] = word_number
         word_number += 1
 
+threshold_answers = 15
 answers_words_to_int = {}
 word_number = 0
 for word, count in word_to_count.items():
-    if count >= threshold:
+    if count >= threshold_answers:
         answers_words_to_int[word] = word_number
         word_number += 1
 
@@ -116,13 +137,13 @@ for token in tokens:
 
 for token in tokens:
     answers_words_to_int[token] = len(answers_words_to_int) + 1
-    
+
 # Creating the inverse dictionary of the answers_words_to_int dictionary
 answers_ints_to_word = {w_i: w for w, w_i in answers_words_to_int.items()}
 
 # Adding the End of String token to the end of every answer
 for i in range(len(clean_answers)):
-    clean_answers[i] += " <EOS>" 
+    clean_answers[i] += ' <EOS>'
 
 # Converting all the questions and all the answers into integers and
 # replacing all the words that were filtered out by <OUT>
@@ -186,35 +207,35 @@ def encoder_rnn(rnn_inputs, rnn_size, num_layers, keep_prob, sequence_length):
     lstm = tf.contrib.rnn.BasicLSTMCell(rnn_size)
     lstm_dropout = tf.contrib.rnn.DropoutWrapper(lstm, input_keep_prob = keep_prob)
     encoder_cell = tf.contrib.rnn.MultiRNNCell([lstm_dropout] * num_layers)
-    _, encoder_state = tf.nn.bidirectional_dynamic_rnn(cell_fw = encoder_cell, 
-                                                       cell_bw = encoder_cell, 
-                                                       sequence_length = sequence_length, 
-                                                       inputs = rnn_inputs, 
+    _, encoder_state = tf.nn.bidirectional_dynamic_rnn(cell_fw = encoder_cell,
+                                                       cell_bw = encoder_cell,
+                                                       sequence_length = sequence_length,
+                                                       inputs = rnn_inputs,
                                                        dtype = tf.float32)
     # we want only the second element
     return encoder_state
- 
+
 # Decoding the training set
-def decode_training_set(encoder_state, decoder_cell, decoder_embedded_input, 
+def decode_training_set(encoder_state, decoder_cell, decoder_embedded_input,
                         sequence_length, decoding_scope, output_function, keep_prob, batch_size):
     attention_states = tf.zeros([batch_size, 1], decoder_cell.output_size)
     attention_keys, attention_values, attention_score_function, attention_construct_function = tf.contrib.seq2seq.prepare_attention(attention_states, attention_option = 'bahdanau', num_units = decoder_cell.output_size)
-    training_decoder_function = tf.contrib.seq2seq.attention_decoder_fn_train(encoder_state[0], 
-                                                                              attention_keys, 
-                                                                              attention_values, 
-                                                                              attention_score_function, 
-                                                                              attention_construct_function, 
+    training_decoder_function = tf.contrib.seq2seq.attention_decoder_fn_train(encoder_state[0],
+                                                                              attention_keys,
+                                                                              attention_values,
+                                                                              attention_score_function,
+                                                                              attention_construct_function,
                                                                               name = 'attn_dec_train')
-    decoder_output, _, _ = tf.contrib.seq2seq.dynamic_rnn_decoder(decoder_cell, 
-                                                                  training_decoder_function, 
-                                                                  decoder_embedded_input, 
-                                                                  sequence_length, 
+    decoder_output, _, _ = tf.contrib.seq2seq.dynamic_rnn_decoder(decoder_cell,
+                                                                  training_decoder_function,
+                                                                  decoder_embedded_input,
+                                                                  sequence_length,
                                                                   scope = decoding_scope)
     decoder_output_dropout = tf.nn.dropout(decoder_output, keep_prob)
     return output_function(decoder_output_dropout)
 
 # Decoding the test/validation set
-def decode_test_set(encoder_state, decoder_cell, decoder_embeddings_matrix, 
+def decode_test_set(encoder_state, decoder_cell, decoder_embeddings_matrix,
                     sos_id, eos_id, maximum_length, num_words, decoding_scope, output_function, keep_prob, batch_size):
     attention_states = tf.zeros([batch_size, 1, decoder_cell.output_size])
     attention_keys, attention_values, attention_score_function, attention_construct_function = tf.contrib.seq2seq.prepare_attention(attention_states, attention_option = "bahdanau", num_units = decoder_cell.output_size)
@@ -234,9 +255,9 @@ def decode_test_set(encoder_state, decoder_cell, decoder_embeddings_matrix,
                                                                     test_decoder_function,
                                                                     scope = decoding_scope)
     return test_predictions
- 
+
 # Creating the Decoder RNN
-def decoder_rnn(decoder_embedded_input, decoder_embeddings_matrix, encoder_state, 
+def decoder_rnn(decoder_embedded_input, decoder_embeddings_matrix, encoder_state,
                 num_words, sequence_length, rnn_size, num_layers, word_to_int, keep_prob, batch_size):
     with tf.variable_scope("decoding") as decoding_scope:
         lstm = tf.contrib.rnn.BasicLSTMCell(rnn_size)
@@ -271,10 +292,10 @@ def decoder_rnn(decoder_embedded_input, decoder_embeddings_matrix, encoder_state
                                            keep_prob,
                                            batch_size)
     return training_predictions, test_predictions
- 
+
 # Building the seq2seq model
-def seq2seq_model(inputs, targets, keep_prob, batch_size, sequence_length, 
-                  answers_num_words, questions_num_words, encoder_embedding_size, 
+def seq2seq_model(inputs, targets, keep_prob, batch_size, sequence_length,
+                  answers_num_words, questions_num_words, encoder_embedding_size,
                   decoder_embedding_size, rnn_size, num_layers, questions_words_to_int):
     encoder_embedded_input = tf.contrib.layers.embed_sequence(inputs,
                                                               answers_num_words + 1,
@@ -301,29 +322,29 @@ def seq2seq_model(inputs, targets, keep_prob, batch_size, sequence_length,
 
 # Setting the hyperparameters
 epochs = 100
-batch_size = 64
-rnn_size = 512
+batch_size = 32
+rnn_size = 1024
 num_layers = 3
-encoding_embedding_size = 512
-decoding_embedding_size = 512
-learning_rate = 0.01
+encoding_embedding_size = 1024
+decoding_embedding_size = 1024
+learning_rate = 0.001
 learning_rate_decay = 0.9
 min_learning_rate = 0.0001
 keep_probability = 0.5
- 
+
 # Defining a session
 tf.reset_default_graph()
 session = tf.InteractiveSession()
- 
+
 # Loading the model inputs
 inputs, targets, lr, keep_prob = model_inputs()
- 
+
 # Setting the sequence length
 sequence_length = tf.placeholder_with_default(25, None, name = 'sequence_length')
- 
+
 # Getting the shape of the inputs tensor
 input_shape = tf.shape(inputs)
- 
+
 # Getting the training and test predictions
 training_predictions, test_predictions = seq2seq_model(tf.reverse(inputs, [-1]),
                                                        targets,
@@ -337,7 +358,7 @@ training_predictions, test_predictions = seq2seq_model(tf.reverse(inputs, [-1]),
                                                        rnn_size,
                                                        num_layers,
                                                        questions_words_to_int)
- 
+
 # Setting up the Loss Error, the Optimizer and Gradient Clipping
 with tf.name_scope("optimization"):
     loss_error = tf.contrib.seq2seq.sequence_loss(training_predictions,
@@ -347,7 +368,7 @@ with tf.name_scope("optimization"):
     gradients = optimizer.compute_gradients(loss_error)
     clipped_gradients = [(tf.clip_by_value(grad_tensor, -5., 5.), grad_variable) for grad_tensor, grad_variable in gradients if grad_tensor is not None]
     optimizer_gradient_clipping = optimizer.apply_gradients(clipped_gradients)
- 
+
 # Padding the sequences with the <PAD> token
 def apply_padding(batch_of_sequences, word_to_int):
     max_sequence_length = max([len(sequence) for sequence in batch_of_sequences])
@@ -376,7 +397,7 @@ batch_index_check_validation_loss = ((len(training_questions)) // batch_size // 
 total_training_loss_error = 0
 list_validation_loss_error = []
 early_stopping_check = 0
-early_stopping_stop = 1000
+early_stopping_stop = 100
 checkpoint = "./chatbot_weights.ckpt"
 session.run(tf.global_variables_initializer())
 for epoch in range(1, epochs + 1):
@@ -440,7 +461,7 @@ session = tf.InteractiveSession()
 session.run(tf.global_variables_initializer())
 saver = tf.train.Saver()
 saver.restore(session, checkpoint)
- 
+
 # Converting the questions from strings to lists of encoding integers
 def convert_string_to_int(question, word_to_int):
     question = clean_text(question)
@@ -448,7 +469,7 @@ def convert_string_to_int(question, word_to_int):
     # dictionary.get(keyname, optional_value)
     # keyname of the item you want to return the value from
     # optional_ value to return if keyname does not exist in the dictionary
- 
+
 # Setting up the chat
 while(True):
     question = input("You: ")
@@ -463,7 +484,7 @@ while(True):
     for i in np.argmax(predicted_answer, 1):
         if answers_ints_to_word[i] == 'i':
             token = ' I' #space before I?
-        elif answers_ints_word[i] == '<EOS>':
+        elif answers_ints_to_word[i] == '<EOS>':
             token = '.'
         elif answers_ints_to_word[i] == '<OUT>':
             token = 'out'
@@ -473,5 +494,3 @@ while(True):
         if token == '.':
             break
     print('ChatBot: ' + answer)
-
-    
